@@ -326,5 +326,5 @@ BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID reserved) {
     return TRUE;
 }
 
-STDAPI DllRegisterServer()   { return SUCCEEDED(MFStartup(MF_VERSION)) && SUCCEEDED(RegisterVirtualCamera()) ? S_OK : E_FAIL; }
-STDAPI DllUnregisterServer() { HRESULT hr = UnregisterVirtualCamera(); MFShutdown(); return SUCCEEDED(hr) ? S_OK : E_FAIL; }
+STDAPI DllRegisterServer()   { return RegisterVirtualCamera(); }
+STDAPI DllUnregisterServer() { return UnregisterVirtualCamera(); }

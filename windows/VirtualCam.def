@@ -1,0 +1,3 @@
+EXPORTS
+    DllRegisterServer   @1 PRIVATE
+    DllUnregisterServer @2 PRIVATE
