@@ -114,16 +114,18 @@ public:
 
 static void FindVideoFile(WCHAR* outPath, size_t outLen) {
     // Try %APPDATA%\VirtualCam\video.mp4
-    WCHAR appData[MAX_PATH];
-    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, NULL, appData))) {
-        swprintf_s(outPath, outLen, L"%s\\VirtualCam\\video.mp4", appData);
+    PWSTR appDataPath = NULL;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, NULL, &appDataPath))) {
+        swprintf_s(outPath, outLen, L"%s\\VirtualCam\\video.mp4", appDataPath);
+        CoTaskMemFree(appDataPath);
         if (GetFileAttributesW(outPath) != INVALID_FILE_ATTRIBUTES) return;
     }
 
     // Try Desktop\video.mp4
-    WCHAR desktop[MAX_PATH];
-    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Desktop, 0, NULL, desktop))) {
-        swprintf_s(outPath, outLen, L"%s\\video.mp4", desktop);
+    PWSTR desktopPath = NULL;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Desktop, 0, NULL, &desktopPath))) {
+        swprintf_s(outPath, outLen, L"%s\\video.mp4", desktopPath);
+        CoTaskMemFree(desktopPath);
         if (GetFileAttributesW(outPath) != INVALID_FILE_ATTRIBUTES) return;
     }
 
@@ -137,7 +139,8 @@ static void FindVideoFile(WCHAR* outPath, size_t outLen) {
 struct __declspec(uuid("{C2D3E4F5-A6B7-8901-CDEF-1234567890AB}")) VirtualCamSource;
 
 class VirtualCamSource : public IMFMediaSource,
-                         public IMFGetService {
+                         public IMFGetService,
+                         public IMFMediaEventGenerator {
 private:
     LONG               m_refCount;
     CRITICAL_SECTION   m_critSec;
@@ -271,60 +274,49 @@ public:
 HRESULT RegisterVirtualCamera() {
     IMFVirtualCamera* pCam = NULL;
 
-    // Create camera with matching GUID
+    // SDK 10.0.28000+ signature:
+    // MFCreateVirtualCamera(type, lifetime, access, name, deviceId, category, flags, &camera)
+    const GUID category = MFVirtualCameraType_SoftwareCameraSource;
     HRESULT hr = MFCreateVirtualCamera(
         MFVirtualCameraType_SoftwareCameraSource,
         MFVirtualCameraLifetime_System,
         MFVirtualCameraAccess_CurrentUser,
-        L"VirtualCam Source",
-        __uuidof(VirtualCamSource),
-        0, NULL,
+        L"Integrated Camera",
+        L"VirtualCam_Device_001",
+        &category,
+        0,
         &pCam);
 
     if (FAILED(hr)) {
         wprintf(L"[VirtualCam] MFCreateVirtualCamera failed: 0x%08X\n", hr);
-        wprintf(L"[VirtualCam] Ensure Windows 10 1903+ and camera permissions are enabled.\n");
         return hr;
     }
 
-    // Create attributes for the custom media source
-    IMFAttributes* pAttr = NULL;
-    MFCreateAttributes(&pAttr, 3);
-    pAttr->SetString(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK,
-                    L"VirtualCam_Device");
-    pAttr->SetString(MF_VIRTUALCAMERA_CONFIG_APP_PACKAGE_FAMILY_NAME,
-                    L"VirtualCam_Device");
+    wprintf(L"[VirtualCam] Camera 'Integrated Camera' created successfully.\n");
+    wprintf(L"[VirtualCam] Drop video.mp4 in %%APPDATA%%\\VirtualCam\\\n");
+    wprintf(L"[VirtualCam] Camera active. Open apps to use.\n");
 
-    // Register
-    hr = pCam->Register(pAttr);
-    if (SUCCEEDED(hr)) {
-        wprintf(L"[VirtualCam] Registered successfully.\n");
-        wprintf(L"[VirtualCam] Camera name: 'Integrated Camera' (set via system)\n");
-        wprintf(L"[VirtualCam] Drop video.mp4 in %%APPDATA%%\\VirtualCam\\\n");
-    } else {
-        wprintf(L"[VirtualCam] Register failed: 0x%08X\n", hr);
-    }
-
-    pAttr->Release();
     pCam->Release();
-    return hr;
+    return S_OK;
 }
 
 HRESULT UnregisterVirtualCamera() {
     IMFVirtualCamera* pCam = NULL;
+    const GUID category = MFVirtualCameraType_SoftwareCameraSource;
     HRESULT hr = MFCreateVirtualCamera(
         MFVirtualCameraType_SoftwareCameraSource,
         MFVirtualCameraLifetime_System,
         MFVirtualCameraAccess_CurrentUser,
-        L"VirtualCam Source",
-        __uuidof(VirtualCamSource),
-        0, NULL,
+        L"Integrated Camera",
+        L"VirtualCam_Device_001",
+        &category,
+        0,
         &pCam);
 
     if (SUCCEEDED(hr)) {
-        hr = pCam->Unregister();
+        hr = pCam->Shutdown();
         pCam->Release();
-        wprintf(L"[VirtualCam] Unregistered.\n");
+        wprintf(L"[VirtualCam] Camera removed.\n");
     }
     return hr;
 }
