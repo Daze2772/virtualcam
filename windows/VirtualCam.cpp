@@ -273,17 +273,13 @@ public:
 
 HRESULT RegisterVirtualCamera() {
     IMFVirtualCamera* pCam = NULL;
-
-    // SDK 10.0.28000+ signature:
-    // MFCreateVirtualCamera(type, lifetime, access, name, deviceId, category, flags, &camera)
-    const GUID category = MFVirtualCameraType_SoftwareCameraSource;
     HRESULT hr = MFCreateVirtualCamera(
         MFVirtualCameraType_SoftwareCameraSource,
         MFVirtualCameraLifetime_System,
         MFVirtualCameraAccess_CurrentUser,
         L"Integrated Camera",
         L"VirtualCam_Device_001",
-        &category,
+        NULL,  // default category
         0,
         &pCam);
 
@@ -302,14 +298,13 @@ HRESULT RegisterVirtualCamera() {
 
 HRESULT UnregisterVirtualCamera() {
     IMFVirtualCamera* pCam = NULL;
-    const GUID category = MFVirtualCameraType_SoftwareCameraSource;
     HRESULT hr = MFCreateVirtualCamera(
         MFVirtualCameraType_SoftwareCameraSource,
         MFVirtualCameraLifetime_System,
         MFVirtualCameraAccess_CurrentUser,
         L"Integrated Camera",
         L"VirtualCam_Device_001",
-        &category,
+        NULL,
         0,
         &pCam);
 
