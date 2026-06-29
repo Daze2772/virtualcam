@@ -1,6 +1,6 @@
 // windows/VirtualCam.cpp
 // Full Media Foundation Virtual Camera with video file decoding
-// Windows 10 1903+ required
+// Windows 10 1903+ — compatible with SDK 10.0.26100+
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -9,16 +9,18 @@
 #include <mfreadwrite.h>
 #include <mfvirtualcamera.h>
 #include <mferror.h>
-#include <shlwapi.h>
+#include <shlobj.h>
+#include <knownfolders.h>
 #include <stdio.h>
 #include <new>
-#include <vector>
 #include <string>
 
 #pragma comment(lib, "mfplat.lib")
 #pragma comment(lib, "mfreadwrite.lib")
 #pragma comment(lib, "mf.lib")
 #pragma comment(lib, "shlwapi.lib")
+#pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "ole32.lib")
 
 // ── Video File Reader ──────────────────────────────────────────────────
 
@@ -28,147 +30,125 @@ private:
     int              m_width;
     int              m_height;
     int              m_fps;
-    LONGLONG         m_duration;
     int              m_frameIndex;
     CRITICAL_SECTION m_critSec;
 
 public:
     VideoFileReader() : m_pReader(NULL), m_width(1920), m_height(1080),
-                        m_fps(30), m_duration(0), m_frameIndex(0) {
+                        m_fps(30), m_frameIndex(0) {
         InitializeCriticalSection(&m_critSec);
     }
-
-    ~VideoFileReader() {
-        Close();
-        DeleteCriticalSection(&m_critSec);
-    }
+    ~VideoFileReader() { Close(); DeleteCriticalSection(&m_critSec); }
 
     BOOL Open(const WCHAR* path) {
         HRESULT hr = MFCreateSourceReaderFromURL(path, NULL, &m_pReader);
         if (FAILED(hr)) {
-            wprintf(L"[VirtualCam] Cannot open video: %s (0x%08X)\n", path, hr);
+            wprintf(L"[VirtualCam] Cannot open: %s (0x%08X)\n", path, hr);
             return FALSE;
         }
 
-        // Configure output format: NV12, same resolution as source
         IMFMediaType* pType = NULL;
         MFCreateMediaType(&pType);
         pType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
         pType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12);
-
         hr = m_pReader->SetCurrentMediaType(
             (DWORD)MF_SOURCE_READER_FIRST_VIDEO_STREAM, NULL, pType);
         pType->Release();
 
-        if (FAILED(hr)) {
-            // Fallback: don't set media type, use source default
-            wprintf(L"[VirtualCam] Custom format failed, using source default\n");
-        }
-
-        // Get actual media type
-        IMFMediaType* pActualType = NULL;
+        IMFMediaType* pActual = NULL;
         m_pReader->GetCurrentMediaType(
-            (DWORD)MF_SOURCE_READER_FIRST_VIDEO_STREAM, &pActualType);
-        if (pActualType) {
-            MFGetAttributeSize(pActualType, MF_MT_FRAME_SIZE, (UINT32*)&m_width, (UINT32*)&m_height);
+            (DWORD)MF_SOURCE_READER_FIRST_VIDEO_STREAM, &pActual);
+        if (pActual) {
+            UINT32 w = 0, h = 0;
+            MFGetAttributeSize(pActual, MF_MT_FRAME_SIZE, &w, &h);
+            m_width = (int)w; m_height = (int)h;
             UINT32 num = 0, den = 0;
-            MFGetAttributeRatio(pActualType, MF_MT_FRAME_RATE, &num, &den);
+            MFGetAttributeRatio(pActual, MF_MT_FRAME_RATE, &num, &den);
             if (den > 0) m_fps = num / den;
-            pActualType->Release();
+            pActual->Release();
         }
 
-        // Get duration
-        IMFPresentationDescriptor* pPD = NULL;
-        m_pReader->GetPresentationAttribute(
-            (DWORD)MF_SOURCE_READER_MEDIASOURCE, MF_PD_DURATION, NULL);
-        PROPVARIANT var;
-        PropVariantInit(&var);
-        hr = m_pReader->GetPresentationAttribute(
-            (DWORD)MF_SOURCE_READER_MEDIASOURCE, MF_PD_DURATION, &var);
-        if (SUCCEEDED(hr)) {
-            m_duration = var.hVal.QuadPart;
-        }
-        PropVariantClear(&var);
+        m_pReader->SetStreamSelection((DWORD)MF_SOURCE_READER_ALL_STREAMS, FALSE);
+        m_pReader->SetStreamSelection((DWORD)MF_SOURCE_READER_FIRST_VIDEO_STREAM, TRUE);
 
-        // Loop the video
-        m_pReader->SetStreamSelection(
-            (DWORD)MF_SOURCE_READER_ALL_STREAMS, FALSE);
-        m_pReader->SetStreamSelection(
-            (DWORD)MF_SOURCE_READER_FIRST_VIDEO_STREAM, TRUE);
-
-        wprintf(L"[VirtualCam] Video opened: %dx%d @ %dfps\n", m_width, m_height, m_fps);
+        wprintf(L"[VirtualCam] Video: %dx%d @ %dfps\n", m_width, m_height, m_fps);
         return TRUE;
     }
 
     IMFSample* GetNextFrame() {
         EnterCriticalSection(&m_critSec);
-        if (!m_pReader) {
-            LeaveCriticalSection(&m_critSec);
-            return NULL;
-        }
+        if (!m_pReader) { LeaveCriticalSection(&m_critSec); return NULL; }
 
-        DWORD streamIndex, flags;
-        LONGLONG timestamp;
+        DWORD idx, flags;
+        LONGLONG ts;
         IMFSample* pSample = NULL;
-
         HRESULT hr = m_pReader->ReadSample(
-            (DWORD)MF_SOURCE_READER_FIRST_VIDEO_STREAM,
-            0, &streamIndex, &flags, &timestamp, &pSample);
+            (DWORD)MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0, &idx, &flags, &ts, &pSample);
 
         if (FAILED(hr) || (flags & MF_SOURCE_READERF_ENDOFSTREAM)) {
-            // Loop: restart from beginning
-            PROPVARIANT var;
-            PropVariantInit(&var);
-            var.vt = VT_I8;
-            var.hVal.QuadPart = 0;
+            PROPVARIANT var; PropVariantInit(&var);
+            var.vt = VT_I8; var.hVal.QuadPart = 0;
             m_pReader->SetCurrentPosition(GUID_NULL, var);
             PropVariantClear(&var);
             m_frameIndex = 0;
-
-            // Try reading again
             hr = m_pReader->ReadSample(
-                (DWORD)MF_SOURCE_READER_FIRST_VIDEO_STREAM,
-                0, &streamIndex, &flags, &timestamp, &pSample);
+                (DWORD)MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0, &idx, &flags, &ts, &pSample);
         }
-
-        if (SUCCEEDED(hr) && pSample) {
-            m_frameIndex++;
-        }
-
+        if (SUCCEEDED(hr) && pSample) m_frameIndex++;
         LeaveCriticalSection(&m_critSec);
         return pSample;
     }
 
     void Close() {
         EnterCriticalSection(&m_critSec);
-        if (m_pReader) {
-            m_pReader->Release();
-            m_pReader = NULL;
-        }
+        if (m_pReader) { m_pReader->Release(); m_pReader = NULL; }
         LeaveCriticalSection(&m_critSec);
     }
 
-    int GetWidth()  const { return m_width; }
+    int GetWidth() const { return m_width; }
     int GetHeight() const { return m_height; }
-    int GetFPS()    const { return m_fps; }
+    int GetFPS() const { return m_fps; }
 };
+
+// ── Helper: find video file ────────────────────────────────────────────
+
+static void FindVideoFile(WCHAR* outPath, size_t outLen) {
+    // Try %APPDATA%\VirtualCam\video.mp4
+    WCHAR appData[MAX_PATH];
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, NULL, appData))) {
+        swprintf_s(outPath, outLen, L"%s\\VirtualCam\\video.mp4", appData);
+        if (GetFileAttributesW(outPath) != INVALID_FILE_ATTRIBUTES) return;
+    }
+
+    // Try Desktop\video.mp4
+    WCHAR desktop[MAX_PATH];
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Desktop, 0, NULL, desktop))) {
+        swprintf_s(outPath, outLen, L"%s\\video.mp4", desktop);
+        if (GetFileAttributesW(outPath) != INVALID_FILE_ATTRIBUTES) return;
+    }
+
+    // Try current directory
+    swprintf_s(outPath, outLen, L"video.mp4");
+}
 
 // ── Virtual Camera Media Source ────────────────────────────────────────
 
+// Declare GUID for VirtualCamSource
+struct __declspec(uuid("{C2D3E4F5-A6B7-8901-CDEF-1234567890AB}")) VirtualCamSource;
+
 class VirtualCamSource : public IMFMediaSource,
-                         public IMFGetService,
-                         public IMFMediaEventGenerator {
+                         public IMFGetService {
 private:
-    LONG              m_refCount;
-    CRITICAL_SECTION  m_critSec;
+    LONG               m_refCount;
+    CRITICAL_SECTION   m_critSec;
     IMFMediaEventQueue* m_pEventQueue;
-    volatile BOOL     m_isShutdown;
-    volatile BOOL     m_isStarted;
-    HANDLE            m_frameThread;
-    volatile BOOL     m_frameThreadRunning;
-    int               m_frameIndex;
-    VideoFileReader*  m_pReader;
-    IMFSample*        m_pCurrentSample;
+    volatile BOOL      m_isShutdown;
+    volatile BOOL      m_isStarted;
+    HANDLE             m_frameThread;
+    volatile BOOL      m_frameThreadRunning;
+    int                m_frameIndex;
+    VideoFileReader*   m_pReader;
+    IMFSample*         m_pCurrentSample;
 
 public:
     VirtualCamSource() : m_refCount(1), m_isShutdown(FALSE),
@@ -177,23 +157,11 @@ public:
                          m_pReader(NULL), m_pCurrentSample(NULL) {
         InitializeCriticalSection(&m_critSec);
         MFCreateEventQueue(&m_pEventQueue);
-
         m_pReader = new VideoFileReader();
 
-        // Find video file
         WCHAR videoPath[MAX_PATH];
-        WCHAR appData[MAX_PATH];
-        if (SUCCEEDED(SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, 0, appData))) {
-            swprintf_s(videoPath, L"%s\\VirtualCam\\video.mp4", appData);
-        }
-        if (!m_pReader->Open(videoPath)) {
-            // Try Desktop
-            WCHAR desktop[MAX_PATH];
-            if (SUCCEEDED(SHGetFolderPathW(NULL, CSIDL_DESKTOP, NULL, 0, desktop))) {
-                swprintf_s(videoPath, L"%s\\video.mp4", desktop);
-                m_pReader->Open(videoPath);
-            }
-        }
+        FindVideoFile(videoPath, MAX_PATH);
+        m_pReader->Open(videoPath);
     }
 
     ~VirtualCamSource() {
@@ -208,36 +176,32 @@ public:
     STDMETHODIMP QueryInterface(REFIID riid, void** ppv) {
         if (riid == __uuidof(IUnknown) ||
             riid == __uuidof(IMFMediaSource) ||
-            riid == __uuidof(IMFMediaEventGenerator) ||
             riid == __uuidof(IMFGetService)) {
             *ppv = static_cast<IMFMediaSource*>(this);
-            AddRef();
-            return S_OK;
+            AddRef(); return S_OK;
         }
-        *ppv = NULL;
-        return E_NOINTERFACE;
+        *ppv = NULL; return E_NOINTERFACE;
     }
     STDMETHODIMP_(ULONG) AddRef() { return InterlockedIncrement(&m_refCount); }
     STDMETHODIMP_(ULONG) Release() {
-        LONG ref = InterlockedDecrement(&m_refCount);
-        if (ref == 0) delete this;
-        return ref;
+        LONG r = InterlockedDecrement(&m_refCount);
+        if (r == 0) delete this;
+        return r;
     }
 
-    // IMFMediaEventGenerator
+    // IMFMediaEventGenerator (inherited via IMFMediaSource)
     STDMETHODIMP GetEvent(DWORD flags, IMFMediaEvent** ppEvent)
         { return m_pEventQueue->GetEvent(flags, ppEvent); }
-    STDMETHODIMP BeginGetEvent(IMFAsyncCallback* cb, IUnknown* state)
-        { return m_pEventQueue->BeginGetEvent(cb, state); }
-    STDMETHODIMP EndGetEvent(IMFAsyncResult* result, IMFMediaEvent** ppEvent)
-        { return m_pEventQueue->EndGetEvent(result, ppEvent); }
+    STDMETHODIMP BeginGetEvent(IMFAsyncCallback* cb, IUnknown* st)
+        { return m_pEventQueue->BeginGetEvent(cb, st); }
+    STDMETHODIMP EndGetEvent(IMFAsyncResult* res, IMFMediaEvent** ppEvent)
+        { return m_pEventQueue->EndGetEvent(res, ppEvent); }
     STDMETHODIMP QueueEvent(MediaEventType t, REFGUID ext, HRESULT hr, const PROPVARIANT* pv)
         { return m_pEventQueue->QueueEventParamVar(t, ext, hr, pv); }
 
     // IMFMediaSource
     STDMETHODIMP GetCharacteristics(DWORD* pdw) {
-        *pdw = MFMEDIASOURCE_IS_LIVE;
-        return S_OK;
+        *pdw = MFMEDIASOURCE_IS_LIVE; return S_OK;
     }
 
     STDMETHODIMP CreatePresentationDescriptor(IMFPresentationDescriptor** ppPD) {
@@ -245,77 +209,56 @@ public:
         int h = m_pReader ? m_pReader->GetHeight() : 1080;
         int fps = m_pReader ? m_pReader->GetFPS() : 30;
 
-        IMFMediaType* pType = NULL;
-        MFCreateMediaType(&pType);
+        IMFMediaType* pType = NULL; MFCreateMediaType(&pType);
         pType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
         pType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12);
         MFSetAttributeSize(pType, MF_MT_FRAME_SIZE, w, h);
         MFSetAttributeRatio(pType, MF_MT_FRAME_RATE, fps, 1);
         MFSetAttributeRatio(pType, MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
-
-        IMFStreamDescriptor* pSD = NULL;
-        MFCreateStreamDescriptor(0, 1, &pType, &pSD);
+        IMFStreamDescriptor* pSD = NULL; MFCreateStreamDescriptor(0, 1, &pType, &pSD);
         pType->Release();
-
-        IMFPresentationDescriptor* pPD = NULL;
-        MFCreatePresentationDescriptor(1, &pSD, &pPD);
+        IMFPresentationDescriptor* pPD = NULL; MFCreatePresentationDescriptor(1, &pSD, &pPD);
         pSD->Release();
-
-        *ppPD = pPD;
-        return S_OK;
+        *ppPD = pPD; return S_OK;
     }
 
-    STDMETHODIMP Start(IMFPresentationDescriptor* pPD,
-                       const GUID* pguidTimeFormat,
-                       const PROPVARIANT* pStartPos) {
+    STDMETHODIMP Start(IMFPresentationDescriptor* pPD, const GUID* pFmt, const PROPVARIANT* pPos) {
         m_isStarted = TRUE;
-        QueueEvent(MEStreamStarted, GUID_NULL, S_OK, NULL);
-
+        QueueEvent(MESourceStarted, GUID_NULL, S_OK, NULL);
         if (!m_frameThreadRunning) {
             m_frameThreadRunning = TRUE;
             m_frameThread = CreateThread(NULL, 0, FramePumpThread, this, 0, NULL);
         }
         return S_OK;
     }
-
     STDMETHODIMP Stop() {
-        m_isStarted = FALSE;
-        m_frameThreadRunning = FALSE;
-        if (m_frameThread) {
-            WaitForSingleObject(m_frameThread, 5000);
-            CloseHandle(m_frameThread);
-            m_frameThread = NULL;
-        }
+        m_isStarted = FALSE; m_frameThreadRunning = FALSE;
+        if (m_frameThread) { WaitForSingleObject(m_frameThread, 5000); CloseHandle(m_frameThread); m_frameThread = NULL; }
         return S_OK;
     }
     STDMETHODIMP Pause() { return S_OK; }
     STDMETHODIMP Shutdown() {
-        Stop();
-        m_isShutdown = TRUE;
-        m_pEventQueue->Shutdown();
-        return S_OK;
+        Stop(); m_isShutdown = TRUE; m_pEventQueue->Shutdown(); return S_OK;
     }
 
     // IMFGetService
     STDMETHODIMP GetService(REFGUID guidService, REFIID riid, LPVOID* ppv) {
-        if (guidService == MF_VIRTUALCAMERA_PROVIDER_SERVICE)
-            return QueryInterface(riid, ppv);
-        return MF_E_UNSUPPORTED_SERVICE;
+        // Return our media source for virtual camera requests
+        return QueryInterface(riid, ppv);
     }
 
-    // Frame pump
     static DWORD WINAPI FramePumpThread(LPVOID param) {
         VirtualCamSource* src = (VirtualCamSource*)param;
         int fps = src->m_pReader ? src->m_pReader->GetFPS() : 30;
-
         while (src->m_frameThreadRunning) {
             IMFSample* sample = src->m_pReader->GetNextFrame();
             if (sample) {
                 EnterCriticalSection(&src->m_critSec);
                 if (src->m_pCurrentSample) src->m_pCurrentSample->Release();
-                src->m_pCurrentSample = sample;
+                src->m_pCurrentSample = sample; sample->AddRef();
                 src->m_frameIndex++;
                 LeaveCriticalSection(&src->m_critSec);
+                sample->Release();
             }
             Sleep(1000 / fps);
         }
@@ -326,33 +269,44 @@ public:
 // ── COM Registration ──────────────────────────────────────────────────
 
 HRESULT RegisterVirtualCamera() {
-    IMFAttributes* pAttr = NULL;
-    MFCreateAttributes(&pAttr, 4);
-    pAttr->SetString(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK,
-                    L"VirtualCam_Device");
-    pAttr->SetGUID(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
-                  MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID);
-    pAttr->SetString(MF_VIRTUALCAMERA_NAME, L"Integrated Camera");
-    pAttr->SetGUID(MF_VIRTUALCAMERA_PROVIDER_SERVICE,
-                  __uuidof(VirtualCamSource));
-
     IMFVirtualCamera* pCam = NULL;
+
+    // Create camera with matching GUID
     HRESULT hr = MFCreateVirtualCamera(
         MFVirtualCameraType_SoftwareCameraSource,
         MFVirtualCameraLifetime_System,
         MFVirtualCameraAccess_CurrentUser,
-        L"VirtualCam",
-        L"{B2C3D4E5-F6A7-8901-BCDE-F12345678901}",
-        NULL, 0, NULL, &pCam);
+        L"VirtualCam Source",
+        __uuidof(VirtualCamSource),
+        0, NULL,
+        &pCam);
 
-    if (SUCCEEDED(hr)) hr = pCam->Register(pAttr);
-    if (pCam) pCam->Release();
-    if (pAttr) pAttr->Release();
+    if (FAILED(hr)) {
+        wprintf(L"[VirtualCam] MFCreateVirtualCamera failed: 0x%08X\n", hr);
+        wprintf(L"[VirtualCam] Ensure Windows 10 1903+ and camera permissions are enabled.\n");
+        return hr;
+    }
 
-    if (SUCCEEDED(hr))
-        wprintf(L"[VirtualCam] Registered. Drop video.mp4 in %%APPDATA%%\\VirtualCam\\\n");
-    else
+    // Create attributes for the custom media source
+    IMFAttributes* pAttr = NULL;
+    MFCreateAttributes(&pAttr, 3);
+    pAttr->SetString(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK,
+                    L"VirtualCam_Device");
+    pAttr->SetString(MF_VIRTUALCAMERA_CONFIG_APP_PACKAGE_FAMILY_NAME,
+                    L"VirtualCam_Device");
+
+    // Register
+    hr = pCam->Register(pAttr);
+    if (SUCCEEDED(hr)) {
+        wprintf(L"[VirtualCam] Registered successfully.\n");
+        wprintf(L"[VirtualCam] Camera name: 'Integrated Camera' (set via system)\n");
+        wprintf(L"[VirtualCam] Drop video.mp4 in %%APPDATA%%\\VirtualCam\\\n");
+    } else {
         wprintf(L"[VirtualCam] Register failed: 0x%08X\n", hr);
+    }
+
+    pAttr->Release();
+    pCam->Release();
     return hr;
 }
 
@@ -362,20 +316,22 @@ HRESULT UnregisterVirtualCamera() {
         MFVirtualCameraType_SoftwareCameraSource,
         MFVirtualCameraLifetime_System,
         MFVirtualCameraAccess_CurrentUser,
-        L"VirtualCam",
-        L"{B2C3D4E5-F6A7-8901-BCDE-F12345678901}",
-        NULL, 0, NULL, &pCam);
+        L"VirtualCam Source",
+        __uuidof(VirtualCamSource),
+        0, NULL,
+        &pCam);
 
     if (SUCCEEDED(hr)) {
-        pCam->Unregister();
+        hr = pCam->Unregister();
         pCam->Release();
+        wprintf(L"[VirtualCam] Unregistered.\n");
     }
     return hr;
 }
 
 // ── DLL Entry Points ──────────────────────────────────────────────────
 
-BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID lpReserved) {
+BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID reserved) {
     switch (reason) {
     case DLL_PROCESS_ATTACH: MFStartup(MF_VERSION); break;
     case DLL_PROCESS_DETACH: MFShutdown(); break;
@@ -383,5 +339,5 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID lpReserved) {
     return TRUE;
 }
 
-STDAPI DllRegisterServer()   { return SUCCEEDED(RegisterVirtualCamera()) ? S_OK : E_FAIL; }
-STDAPI DllUnregisterServer() { return SUCCEEDED(UnregisterVirtualCamera()) ? S_OK : E_FAIL; }
+STDAPI DllRegisterServer()   { return SUCCEEDED(MFStartup(MF_VERSION)) && SUCCEEDED(RegisterVirtualCamera()) ? S_OK : E_FAIL; }
+STDAPI DllUnregisterServer() { HRESULT hr = UnregisterVirtualCamera(); MFShutdown(); return SUCCEEDED(hr) ? S_OK : E_FAIL; }
