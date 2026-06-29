@@ -1,0 +1,44 @@
+name: Build Virtual Camera Drivers
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build VirtualCam DLL
+        run: |
+          cd windows
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          cl /EHsc /O2 /MT /DNDEBUG VirtualCam.cpp /FeVirtualCam.dll /DLL /SUBSYSTEM:WINDOWS kernel32.lib mfplat.lib mf.lib shlwapi.lib
+        shell: cmd
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VirtualCam-Windows
+          path: windows/VirtualCam.dll
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build DAL Plugin
+        run: |
+          cd macos
+          make
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VirtualCam-macOS
+          path: macos/VirtualCam.plugin
