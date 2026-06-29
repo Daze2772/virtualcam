@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleExecutable</key>
+    <string>VirtualCamPlugin</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.virtualcam.dal-plugin</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>VirtualCam</string>
+    <key>CFBundlePackageType</key>
+    <string>BNDL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CMIOHardwarePlugIn</key>
+    <dict>
+        <key>FactoryFunction</key>
+        <string>VirtualCam_Create</string>
+    </dict>
+    <key>CFPlugInDynamicRegistration</key>
+    <string>NO</string>
+    <key>CFPlugInFactories</key>
+    <dict>
+        <key>00000000-0000-0000-0000-000000000000</key>
+        <string>VirtualCam_Create</string>
+    </dict>
+    <key>CFPlugInTypes</key>
+    <dict>
+        <key>39A1F3F0-8A42-11D8-83C3-0020359AF764</key>
+        <array>
+            <string>00000000-0000-0000-0000-000000000000</string>
+        </array>
+    </dict>
+</dict>
+</plist>

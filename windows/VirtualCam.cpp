@@ -272,6 +272,8 @@ public:
 // ── COM Registration ──────────────────────────────────────────────────
 
 HRESULT RegisterVirtualCamera() {
+    wprintf(L"[VirtualCam] Starting registration...\n");
+
     IMFVirtualCamera* pCam = NULL;
     HRESULT hr = MFCreateVirtualCamera(
         MFVirtualCameraType_SoftwareCameraSource,
@@ -279,19 +281,18 @@ HRESULT RegisterVirtualCamera() {
         MFVirtualCameraAccess_CurrentUser,
         L"Integrated Camera",
         L"VirtualCam_Device_001",
-        NULL,  // default category
+        NULL,
         0,
         &pCam);
 
     if (FAILED(hr)) {
         wprintf(L"[VirtualCam] MFCreateVirtualCamera failed: 0x%08X\n", hr);
+        if (hr == 0x800401f3) wprintf(L"[VirtualCam] Virtual camera API not available on this Windows edition\n");
+        if (hr == E_ACCESSDENIED) wprintf(L"[VirtualCam] Access denied - run as Administrator\n");
         return hr;
     }
 
-    wprintf(L"[VirtualCam] Camera 'Integrated Camera' created successfully.\n");
-    wprintf(L"[VirtualCam] Drop video.mp4 in %%APPDATA%%\\VirtualCam\\\n");
-    wprintf(L"[VirtualCam] Camera active. Open apps to use.\n");
-
+    wprintf(L"[VirtualCam] Registration successful.\n");
     pCam->Release();
     return S_OK;
 }
