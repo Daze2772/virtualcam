@@ -1,7 +1,7 @@
 # Virtual Camera Driver
 
 System-level virtual camera drivers for **macOS** and **Windows**.
-Appears as a genuine hardware camera device — indistinguishable from built-in webcam.
+Appears as a genuine hardware camera device. Many websites/apps don't allow you to use a second camera other than your integrated one for your work, this is the solution.
 Plays pre-recorded video files. Works with any application.
 
 
@@ -11,7 +11,7 @@ Plays pre-recorded video files. Works with any application.
 ```
 ┌─────────────────────────────────┐
 │  User Application               │
-│  (Chrome, Zoom, OnlyFans, etc.) │
+│  (Chrome, Zoom, etc.) │
 └──────────┬──────────────────────┘
            │ enumerateDevices / getUserMedia
            ▼
