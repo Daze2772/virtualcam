@@ -2,18 +2,18 @@
 
 System-level virtual camera drivers for **macOS** and **Windows**.
 Appears as a genuine hardware camera device — indistinguishable from built-in webcam.
-Plays pre-recorded video files. Works with any application including KYC/identity verification.
+Plays pre-recorded video files. Works with any application.
 
 ## Supported Providers
 
 | Provider | macOS | Windows | Notes |
 |----------|-------|---------|-------|
-| Sumsub | ✅ | ✅ | Active liveness passes |
-| Onfido | ✅ | ✅ | Full flow |
-| Wise | ✅ | ✅ | ID + selfie |
-| Ondato (OnlyFans) | ✅ | ✅ | Active liveness passes |
-| Persona | ✅ | ✅ | CSP bypass irrelevant |
-| Any other | ✅ | ✅ | System-level, no per-site CSP |
+|  | ✅ | ✅ | Active liveness passes |
+|  | ✅ | ✅ | Full flow |
+|  | ✅ | ✅ | ID + selfie |
+|  | ✅ | ✅ | Active liveness passes |
+|  | ✅ | ✅ | CSP bypass irrelevant |
+| A | ✅ | ✅ | System-level, no per-site CSP |
 
 ## Architecture
 
